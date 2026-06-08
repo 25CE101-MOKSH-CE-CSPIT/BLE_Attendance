@@ -337,6 +337,7 @@ class _TeacherPageState extends State<TeacherPage> {
   bool _showEndConfirm = false;
   bool _isScanning = false;
   Map<String, dynamic>? _summary;
+  Map<String, String> _studentNames = {};
   Timer? _scanRetryTimer;
   Timer? _refreshTimer;
   StreamSubscription<DiscoveredDevice>? _scanSub;
@@ -412,6 +413,7 @@ class _TeacherPageState extends State<TeacherPage> {
       _startStudentScan();
       _startForegroundService('Teaching: $subjectName');
       if (mounted) setState(() {});
+      _fetchStudentNames(_sessionId!);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
@@ -535,6 +537,24 @@ class _TeacherPageState extends State<TeacherPage> {
         _sessionId = session['id'] as String;
         _token = session['token'] as String;
         _finalizationOpen = (session['finalization_open'] as bool?) ?? false;
+      });
+      _fetchStudentNames(_sessionId!);
+    } catch (_) {}
+  }
+
+  Future<void> _fetchStudentNames(String sessionId) async {
+    try {
+      final summary = await widget.api.getAttendanceSummary(sessionId);
+      if (!mounted) return;
+      final Map<String, String> names = {};
+      for (final record in (summary['records'] as List)) {
+        if (record['student_id'] != null && record['student_name'] != null) {
+          names[record['student_id']] = record['student_name'];
+        }
+      }
+      setState(() {
+        _studentNames = names;
+        _summary = summary;
       });
     } catch (_) {}
   }
@@ -729,7 +749,7 @@ class _TeacherPageState extends State<TeacherPage> {
                               ),
                               const SizedBox(width: 10),
                               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(s.studentId, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                Text('${s.studentId}${_studentNames[s.studentId] != null ? ' • ${_studentNames[s.studentId]}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                                 Text('${s.hits}/${s.total} hits · RSSI ${s.latestRssi ?? '-'} · ${_timeAgo(s.latestAt)}',
                                     style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(140))),
                               ])),
@@ -831,6 +851,7 @@ class _StudentPageState extends State<StudentPage> {
 
   String? _sessionId;
   String? _subject;
+  String? _teacherName;
   String? _studentIdentifier;
   int? _latestRssi;
   bool _scanning = false;
@@ -946,7 +967,8 @@ class _StudentPageState extends State<StudentPage> {
       if (!mounted) return;
       setState(() {
         _sessionId = session['id'] as String;
-        _subject = session['subject'] as String?;
+        _subject = session['subject'] as String;
+        _teacherName = session['teacher_name'] as String?;
         _finalizationOpen = (session['finalization_open'] as bool?) ?? false;
         _blePermissionsGranted = true;
       });
@@ -1283,6 +1305,8 @@ class _StudentPageState extends State<StudentPage> {
                   if (_subject != null) ...[
                     const SizedBox(height: 2),
                     Text(_subject!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    if (_teacherName != null && _teacherName!.isNotEmpty)
+                      Text('Teacher: $_teacherName', style: TextStyle(fontSize: 13, color: cs.onSurface.withAlpha(160))),
                   ],
                 ])),
               ]),

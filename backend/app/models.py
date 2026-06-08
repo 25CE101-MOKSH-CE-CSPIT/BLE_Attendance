@@ -147,6 +147,7 @@ class Session(Base):
     finalization_open: Mapped[bool] = mapped_column(Boolean, default=False)
     attendance_locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    teacher: Mapped["User"] = relationship(foreign_keys=[teacher_user_id])
     detections: Mapped[list["Detection"]] = relationship(back_populates="session")
     assignment: Mapped["TeacherAssignment | None"] = relationship()
 

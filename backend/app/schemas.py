@@ -50,6 +50,7 @@ class SessionOut(BaseModel):
     subject: str
     token: str
     teacher_user_id: str
+    teacher_name: str = ""
     assignment_id: Optional[int] = None
     starts_at: datetime
     ends_at: Optional[datetime] = None

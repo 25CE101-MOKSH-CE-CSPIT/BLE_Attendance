@@ -894,7 +894,9 @@ def _get_own_session(db, session_id, teacher_id):
 
 def _session_out(s: LectureSession) -> SessionOut:
     return SessionOut(id=s.id, subject=s.subject, token=s.token,
-                      teacher_user_id=s.teacher_user_id, assignment_id=s.assignment_id,
+                      teacher_user_id=s.teacher_user_id,
+                      teacher_name=s.teacher.full_name if s.teacher else "",
+                      assignment_id=s.assignment_id,
                       starts_at=s.starts_at, ends_at=s.ends_at, is_active=s.is_active,
                       finalization_open=s.finalization_open,
                       attendance_locked=s.attendance_locked or False)
