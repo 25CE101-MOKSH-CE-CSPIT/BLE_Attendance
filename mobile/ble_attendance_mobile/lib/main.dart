@@ -1055,20 +1055,16 @@ class _StudentPageState extends State<StudentPage> {
   }
 
   void _updateDebouncedProximity(bool newValue) {
-    final now = DateTime.now();
-    if (_rawProximityOk != newValue) {
-      _rawProximityOk = newValue;
-      _rawProximityChangeAt = now;
-      // Do NOT apply immediately — wait for debounce to confirm stability
-    } else if (_rawProximityChangeAt != null &&
-        now.difference(_rawProximityChangeAt!) >= kProximityDebounceDuration) {
-      // Value has been stable for debounce duration — apply it
+    if (_rawProximityOk == newValue) return;
+
+    _rawProximityOk = newValue;
+    _proximityDebounceTimer?.cancel();
+    _proximityDebounceTimer = Timer(kProximityDebounceDuration, () {
+      if (!mounted) return;
       if (_proximityOk != newValue) {
         setState(() => _proximityOk = newValue);
       }
-    }
-    // First reading: only set after debounce window, not immediately
-    // (removed the _proximityOk ??= newValue that bypassed debounce)
+    });
   }
 
   Map<String, dynamic>? _decodeTeacherPayload(DiscoveredDevice device) {
