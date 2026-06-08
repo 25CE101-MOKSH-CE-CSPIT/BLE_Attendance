@@ -3,6 +3,8 @@ name: Build & Release APK
 on:
   push:
     branches:
+      - main
+      - Kushagra
       - MOKSH          # change to your default branch if different
   workflow_dispatch:  # lets you trigger manually from the Actions tab
 
