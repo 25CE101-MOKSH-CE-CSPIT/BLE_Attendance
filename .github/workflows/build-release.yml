@@ -79,7 +79,9 @@ jobs:
       # Produces: mobile/ble_attendance_mobile/build/app/outputs/flutter-apk/app-release.apk
       - name: Build release APK
         working-directory: mobile/ble_attendance_mobile
-        run: flutter build apk --release --target-platform android-arm64
+        run: |
+          flutter build apk --release --target-platform android-arm64 \
+            --dart-define=API_BASE_URL=${{ secrets.API_BASE_URL || 'https://ble-attendance.onrender.com' }}
 
       # ── Version tag ───────────────────────────────────────────────────────
       # Reads the version from pubspec.yaml, e.g. "1.2.0+3"
