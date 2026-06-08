@@ -452,8 +452,9 @@ class _TeacherPageState extends State<TeacherPage> {
       onDone: () { if (mounted) setState(() => _isScanning = false); _scheduleStudentScanRetry(); },
     );
 
-    // Periodically restart the scan every 1 second to bypass Android/ColorOS advertisement deduplication
-    _scanCycleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // Periodically restart the scan every 7 seconds to bypass Android/ColorOS advertisement deduplication
+    // (Minimum 6-7 seconds is required to avoid triggering Android's scan throttle: max 5 starts per 30 seconds)
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 7), (_) {
       if (mounted && _sessionId != null && _isScanning) {
         setState(() {
           _isScanning = false;
@@ -1122,8 +1123,9 @@ class _StudentPageState extends State<StudentPage> {
           },
         );
 
-    // Periodically restart the scan every 1 second to bypass Android/ColorOS advertisement deduplication
-    _scanCycleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // Periodically restart the scan every 7 seconds to bypass Android/ColorOS advertisement deduplication
+    // (Minimum 6-7 seconds is required to avoid triggering Android's scan throttle: max 5 starts per 30 seconds)
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 7), (_) {
       if (mounted && _scanning && _bleStatus == BleStatus.ready) {
         setState(() {
           _scanning = false;
