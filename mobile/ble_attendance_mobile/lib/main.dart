@@ -886,8 +886,8 @@ class _TeacherPageState extends State<TeacherPage> {
                                   color: s.inRange ? const Color(0xFFDCFCE7) : const Color(0xFFF5F5F5),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
-                                child: Icon(s.inRange ? Icons.check_rounded : Icons.close_rounded,
-                                    color: s.inRange ? Colors.green : Colors.grey, size: 18),
+                                child: Icon(Icons.person_rounded,
+                                    color: s.inRange ? Colors.green.shade700 : Colors.grey, size: 20),
                               ),
                               const SizedBox(width: 10),
                               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -900,26 +900,18 @@ class _TeacherPageState extends State<TeacherPage> {
                                       final ratio = s.total > 0 ? s.hits / s.total : 0.0;
                                       final bool verified = _verifiedStudents[s.studentId] == true;
                                       String label;
-                                      Color bg;
+                                      Color textColor;
                                       if (verified) {
-                                        label = 'Verified';
-                                        bg = const Color(0xFFDCFCE7);
+                                        label = '✓ Verified';
+                                        textColor = const Color(0xFF16A34A);
                                       } else if (ratio < 0.75) {
-                                        label = 'Not Eligible';
-                                        bg = const Color(0xFFFEE2E2);
+                                        label = '✗ Not Eligible';
+                                        textColor = const Color(0xFFDC2626);
                                       } else {
-                                        label = 'Eligible but not verified';
-                                        bg = const Color(0xFFFFF4C2);
+                                        label = '⏳ Pending';
+                                        textColor = const Color(0xFFD97706);
                                       }
-                                      return Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: bg,
-                                          borderRadius: BorderRadius.circular(4),
-                                          border: Border.all(color: Colors.grey.shade400),
-                                        ),
-                                        child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700)),
-                                      );
+                                      return Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: textColor));
                                     }),
                                   ],
                                 ]),

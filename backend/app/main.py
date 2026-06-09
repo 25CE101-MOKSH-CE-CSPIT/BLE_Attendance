@@ -1006,10 +1006,14 @@ def _build_summary(db, session: LectureSession) -> SessionAttendanceSummary:
             if overridden:
                 # Teacher manually set the status – respect it
                 ratio, is_present = att.presence_ratio, att.is_present
+            elif att.total_readings and att.total_readings > 0:
+                # Use the ratio from batch-submit (BLE-only architecture
+                # no longer populates Detection rows).
+                ratio = att.presence_ratio
+                is_present = (ratio >= 0.75) and bio
             else:
-                # Recalculate from live detections so the dashboard
-                # stays in sync with the Excel export.
-                # Both BLE proximity AND biometric are required.
+                # Fallback: recalculate from live detections for
+                # sessions that still use the old detection flow.
                 ratio = compute_presence_ratio(db, session.id, user.id)
                 is_present = (ratio >= 0.75) and bio
         if is_present:
