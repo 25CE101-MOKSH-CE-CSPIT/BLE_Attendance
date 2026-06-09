@@ -74,6 +74,12 @@ def _run_migrations(engine):
                 conn.execute(text("ALTER TABLE users ADD COLUMN admin_id VARCHAR(16) UNIQUE"))
             if "is_super_admin" not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_super_admin BOOLEAN DEFAULT FALSE"))
+        if "attendance" in tables:
+            cols = {c["name"] for c in inspector.get_columns("attendance")}
+            if "total_hits" not in cols:
+                conn.execute(text("ALTER TABLE attendance ADD COLUMN total_hits INTEGER DEFAULT 0"))
+            if "total_readings" not in cols:
+                conn.execute(text("ALTER TABLE attendance ADD COLUMN total_readings INTEGER DEFAULT 0"))
 
 
 @app.on_event("startup")
@@ -839,7 +845,12 @@ def batch_submit_attendance(
                              presence_ratio=0.0, biometric_verified=False)
             db.add(att)
         att.is_present = item["is_present"]
-        att.presence_ratio = 1.0 if item["is_present"] else 0.0
+        att.total_hits = item.get("hits", 0)
+        att.total_readings = item.get("total", 0)
+        if att.total_readings > 0:
+            att.presence_ratio = round(att.total_hits / att.total_readings, 3)
+        else:
+            att.presence_ratio = 1.0 if item["is_present"] else 0.0
         att.overridden_by_teacher = True
         att.override_reason = "BLE batch submit"
         updated += 1
@@ -969,16 +980,20 @@ def _build_summary(db, session: LectureSession) -> SessionAttendanceSummary:
 
     records, present = [], 0
     for user in all_students:
-        dc = db.scalar(
-            select(func.count(Detection.id)).where(
-                and_(Detection.session_id == session.id, Detection.student_user_id == user.id)
-            )
-        ) or 0
         att = db.scalar(
             select(Attendance).where(
                 and_(Attendance.session_id == session.id, Attendance.student_user_id == user.id)
             )
         )
+        if att is not None and (att.total_readings > 0 or att.total_hits > 0):
+            dc = att.total_readings
+        else:
+            dc = db.scalar(
+                select(func.count(Detection.id)).where(
+                    and_(Detection.session_id == session.id, Detection.student_user_id == user.id)
+                )
+            ) or 0
+
         if att is None:
             ratio = compute_presence_ratio(db, session.id, user.id)
             # No attendance record means no biometric done → absent

@@ -173,6 +173,8 @@ class Attendance(Base):
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), nullable=False)
     student_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     presence_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    total_hits: Mapped[int] = mapped_column(Integer, default=0)
+    total_readings: Mapped[int] = mapped_column(Integer, default=0)
     is_present: Mapped[bool] = mapped_column(Boolean, default=False)
     biometric_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     overridden_by_teacher: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -503,10 +503,11 @@ class _TeacherPageState extends State<TeacherPage> {
     }
     setState(() => _loading = true);
     try {
-      // Build final P/A list from local tallies and batch-submit
       final decisions = _studentTallies.values.map((t) => {
         'student_id': t.studentId,
         'is_present': t.hits > 0 && (t.hits / t.total) >= 0.75,
+        'hits': t.hits,
+        'total': t.total,
       }).toList();
 
       if (decisions.isNotEmpty) {
