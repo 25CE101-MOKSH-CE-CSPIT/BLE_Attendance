@@ -484,7 +484,7 @@ class _TeacherPageState extends State<TeacherPage> {
           studentId, () => _StudentTally(studentId: studentId),
         );
         tally.hits = hits;
-        tally.total = total;
+        tally.total = _globalTotalHits;
         tally.latestRssi = rssi;
         tally.latestAt = DateTime.now();
         tally.inRange = ok;
@@ -1206,7 +1206,7 @@ class _StudentPageState extends State<StudentPage> {
     _scanSub = _ble
         .scanForDevices(
           withServices: const [],
-          scanMode: ScanMode.lowPower,
+          scanMode: ScanMode.lowLatency,
           requireLocationServicesEnabled: false,
         )
         .listen(
