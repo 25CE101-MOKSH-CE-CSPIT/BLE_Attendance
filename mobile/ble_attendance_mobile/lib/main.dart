@@ -416,6 +416,10 @@ class _TeacherPageState extends State<TeacherPage> {
       _finalizationOpen = (session['finalization_open'] as bool?) ?? false;
 
       _globalTotalHits = 0;
+      _hitsPaused = false;
+      _studentTallies.clear();
+      _verifiedStudents.clear();
+      _studentNames = {};
       _isAdvertising = true;
       _startStudentScan();
       _startForegroundService('Teaching: $subjectName');
@@ -589,6 +593,7 @@ class _TeacherPageState extends State<TeacherPage> {
           _token = null;
           _finalizationOpen = false;
           _showEndConfirm = false;
+          _hitsPaused = false;
           _studentTallies.clear();
           _verifiedStudents.clear();
         });
@@ -1137,9 +1142,22 @@ class _StudentPageState extends State<StudentPage> {
       if (!mounted) return;
       final wasOpen = _finalizationOpen;
       final isOpen = (session['finalization_open'] as bool?) ?? false;
+      final newId = session['id'] as String;
+
+      // If the session changed (teacher ended and started a new one),
+      // reset local hit counters so stale data doesn't carry over.
+      if (_sessionId != null && _sessionId != newId && _sessionId != 'ble-detected') {
+        _totalBeaconReadings = 0;
+        _inRangeHits = 0;
+        _rssiWindow.clear();
+        _proximityOk = null;
+        _rawProximityOk = null;
+        _latestRssi = null;
+        _updateStudentAdvertising();
+      }
 
       setState(() {
-        _sessionId = session['id'] as String;
+        _sessionId = newId;
         _subject = session['subject'] as String;
         _teacherName = session['teacher_name'] as String?;
         _finalizationOpen = isOpen;
@@ -1149,8 +1167,27 @@ class _StudentPageState extends State<StudentPage> {
       if (isOpen && !wasOpen && !_meetsThreshold) {
         _showNotEligibleDialog();
       }
-    } catch (_) {
-      // Offline — rely on BLE scan to detect teacher beacon
+    } catch (e) {
+      // If server returns 404 (no active session), clear local session state
+      // so the UI unfreezes (e.g. finalization button won't stay stuck).
+      if (e is DioException && e.response?.statusCode == 404) {
+        if (_sessionId != null && _sessionId != 'ble-detected' && mounted) {
+          _totalBeaconReadings = 0;
+          _inRangeHits = 0;
+          _rssiWindow.clear();
+          _proximityOk = null;
+          _rawProximityOk = null;
+          _latestRssi = null;
+          _updateStudentAdvertising();
+          setState(() {
+            _sessionId = null;
+            _subject = null;
+            _teacherName = null;
+            _finalizationOpen = false;
+          });
+        }
+      }
+      // Other errors (offline etc.) — rely on BLE scan to detect teacher beacon
       // Don't clear session ID if we already have one from BLE
     }
   }
@@ -1244,14 +1281,23 @@ class _StudentPageState extends State<StudentPage> {
               // Use raw RSSI instead of average for tracking hits to match teacher's calculation
               final ok = rssi > kRssiThreshold;
 
-              // Track presence hits for threshold check using sequence numbers
+              // Track presence hits for threshold check using sequence numbers.
+              // If seq < _totalBeaconReadings, teacher restarted a new session
+              // (counter reset to 0). Reset our local counters to match.
               final seq = payload['seq'] as int?;
-              if (seq != null && seq > _totalBeaconReadings) {
-                _totalBeaconReadings = seq;
-                if (ok) {
-                  _inRangeHits++;
+              if (seq != null) {
+                if (seq < _totalBeaconReadings) {
+                  // Teacher started a new session — reset student counters
+                  _totalBeaconReadings = 0;
+                  _inRangeHits = 0;
                 }
-                _updateStudentAdvertising();
+                if (seq > _totalBeaconReadings) {
+                  _totalBeaconReadings = seq;
+                  if (ok) {
+                    _inRangeHits++;
+                  }
+                  _updateStudentAdvertising();
+                }
               }
 
               // Debounce proximity changes
