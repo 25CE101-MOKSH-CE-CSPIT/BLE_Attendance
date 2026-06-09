@@ -338,7 +338,7 @@ class _TeacherPageState extends State<TeacherPage> {
   bool _isScanning = false;
   Map<String, dynamic>? _summary;
   Map<String, String> _studentNames = {};
-  final Map<String, bool> _verifiedStudents = {};
+  Map<String, bool> _verifiedStudents = {};
   Timer? _scanRetryTimer;
   Timer? _refreshTimer;
   Timer? _sessionActiveTimer;
