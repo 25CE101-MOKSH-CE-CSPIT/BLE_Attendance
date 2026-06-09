@@ -336,6 +336,7 @@ class _TeacherPageState extends State<TeacherPage> {
   bool _finalizationOpen = false;
   bool _showEndConfirm = false;
   bool _isScanning = false;
+  bool _hitsPaused = false;
   Map<String, dynamic>? _summary;
   Map<String, String> _studentNames = {};
   Map<String, bool> _verifiedStudents = {};
@@ -438,6 +439,7 @@ class _TeacherPageState extends State<TeacherPage> {
         _teacherAdvertiseTimer?.cancel();
         return;
       }
+      if (_hitsPaused) return; // Skip hit increment when paused
       setState(() {
         _globalTotalHits++;
       });
@@ -655,6 +657,20 @@ class _TeacherPageState extends State<TeacherPage> {
     } catch (_) {}
   }
 
+  void _toggleHits() {
+    setState(() {
+      _hitsPaused = !_hitsPaused;
+    });
+    if (_hitsPaused) {
+      // Stop advertising when hits are paused
+      _blePeripheral.stop();
+    } else {
+      // Resume advertising with current payload
+      final subjectName = _selectedSlot?['subject_name'] as String? ?? '';
+      _updateTeacherAdvertisingPayload(subjectName);
+    }
+  }
+
   Future<void> _openFinalization() async {
     final sessionId = _sessionId;
     if (sessionId == null) return;
@@ -662,7 +678,10 @@ class _TeacherPageState extends State<TeacherPage> {
     try {
       final session = await widget.api.openFinalization(sessionId);
       if (!mounted) return;
-      setState(() => _finalizationOpen = (session['finalization_open'] as bool?) ?? true);
+      setState(() {
+        _finalizationOpen = (session['finalization_open'] as bool?) ?? true;
+        _hitsPaused = true; // Auto-pause hits on finalization
+      });
       _teacherAdvertiseTimer?.cancel();
       await _blePeripheral.stop();
       _isAdvertising = false;
@@ -801,15 +820,33 @@ class _TeacherPageState extends State<TeacherPage> {
                   Wrap(spacing: 8, children: [
                     _StatusChip(label: _isAdvertising ? 'BLE ON' : 'BLE OFF', active: _isAdvertising),
                     _StatusChip(label: _isScanning ? 'Scan ON' : 'Scan OFF', active: _isScanning),
+                    _StatusChip(label: _hitsPaused ? 'Hits PAUSED' : 'Hits ACTIVE', active: !_hitsPaused),
                     _StatusChip(label: _finalizationOpen ? 'Finalization OPEN' : 'Finalization CLOSED', active: _finalizationOpen),
                   ]),
+                  const SizedBox(height: 10),
+                  Text('Total hits sent: $_globalTotalHits', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
                 ]),
               ),
               const SizedBox(height: 10),
-              FilledButton.tonal(
-                onPressed: _loading || _finalizationOpen ? null : _openFinalization,
-                child: const Text('Open Finalization for Students'),
-              ),
+              Row(children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _hitsPaused ? Colors.green : Colors.orange,
+                    ),
+                    onPressed: _loading || _finalizationOpen ? null : _toggleHits,
+                    icon: Icon(_hitsPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                    label: Text(_hitsPaused ? 'Start Hits' : 'Stop Hits'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: _loading || _finalizationOpen ? null : _openFinalization,
+                    child: const Text('Open Finalization'),
+                  ),
+                ),
+              ]),
               const SizedBox(height: 14),
               Row(children: [
                 Text('Detected students', style: TextStyle(fontWeight: FontWeight.w700, color: cs.onSurface)),
