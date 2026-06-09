@@ -338,9 +338,13 @@ class _TeacherPageState extends State<TeacherPage> {
   bool _isScanning = false;
   Map<String, dynamic>? _summary;
   Map<String, String> _studentNames = {};
+  final Map<String, bool> _verifiedStudents = {};
   Timer? _scanRetryTimer;
   Timer? _refreshTimer;
+  Timer? _sessionActiveTimer;
   Timer? _scanCycleTimer;
+  Timer? _teacherAdvertiseTimer;
+  int _globalTotalHits = 0;
   StreamSubscription<DiscoveredDevice>? _scanSub;
 
   // Today's schedule slots from server
@@ -361,6 +365,12 @@ class _TeacherPageState extends State<TeacherPage> {
       _loadTodaySchedule();
       if (_sessionId == null) _loadActiveSession();
     });
+    // Fast polling for active session student verifications
+    _sessionActiveTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (_sessionId != null) {
+        _fetchStudentNames(_sessionId!);
+      }
+    });
   }
 
   @override
@@ -370,6 +380,8 @@ class _TeacherPageState extends State<TeacherPage> {
     _scanRetryTimer?.cancel();
     _scanCycleTimer?.cancel();
     _refreshTimer?.cancel();
+    _sessionActiveTimer?.cancel();
+    _teacherAdvertiseTimer?.cancel();
     FlutterForegroundTask.stopService();
     super.dispose();
   }
@@ -402,18 +414,11 @@ class _TeacherPageState extends State<TeacherPage> {
       _token = session['token'] as String;
       _finalizationOpen = (session['finalization_open'] as bool?) ?? false;
 
-      final data = AdvertiseData(
-        serviceUuid: kTeacherServiceUuid,
-        includeDeviceName: false,
-        manufacturerId: kManufacturerId,
-        manufacturerData: Uint8List.fromList(
-          _encodeTeacherPayload(_token!, subjectName),
-        ),
-      );
-      await _blePeripheral.start(advertiseData: data);
+      _globalTotalHits = 0;
       _isAdvertising = true;
       _startStudentScan();
       _startForegroundService('Teaching: $subjectName');
+      _startTeacherAdvertising(subjectName);
       if (mounted) setState(() {});
       _fetchStudentNames(_sessionId!);
     } catch (error) {
@@ -422,6 +427,37 @@ class _TeacherPageState extends State<TeacherPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _startTeacherAdvertising(String subjectName) async {
+    _teacherAdvertiseTimer?.cancel();
+    await _updateTeacherAdvertisingPayload(subjectName);
+
+    _teacherAdvertiseTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+      if (!mounted || !_isAdvertising || _sessionId == null || _finalizationOpen) {
+        _teacherAdvertiseTimer?.cancel();
+        return;
+      }
+      setState(() {
+        _globalTotalHits++;
+      });
+      await _updateTeacherAdvertisingPayload(subjectName);
+    });
+  }
+
+  Future<void> _updateTeacherAdvertisingPayload(String subjectName) async {
+    if (_token == null) return;
+    try {
+      final payloadBytes = _encodeTeacherPayload(_token!, subjectName, _globalTotalHits);
+      final data = AdvertiseData(
+        serviceUuid: kTeacherServiceUuid,
+        includeDeviceName: false,
+        manufacturerId: kManufacturerId,
+        manufacturerData: Uint8List.fromList(payloadBytes),
+      );
+      await _blePeripheral.stop();
+      await _blePeripheral.start(advertiseData: data);
+    } catch (_) {}
   }
 
   void _startStudentScan() {
@@ -434,15 +470,19 @@ class _TeacherPageState extends State<TeacherPage> {
       requireLocationServicesEnabled: false,
     ).listen(
       (device) {
-        final studentId = _extractStudentId(device);
-        if (studentId == null || _sessionId == null) return;
+        final parsed = _extractStudentPayload(device);
+        if (parsed == null || _sessionId == null) return;
+        final studentId = parsed['student_id'] as String;
+        final hits = parsed['hits'] as int;
+        final total = parsed['total'] as int;
         final rssi = device.rssi;
         final ok = rssi > kRssiThreshold;
+
         final tally = _studentTallies.putIfAbsent(
           studentId, () => _StudentTally(studentId: studentId),
         );
-        tally.total++;
-        if (ok) tally.hits++;
+        tally.hits = hits;
+        tally.total = total;
         tally.latestRssi = rssi;
         tally.latestAt = DateTime.now();
         tally.inRange = ok;
@@ -471,23 +511,35 @@ class _TeacherPageState extends State<TeacherPage> {
     });
   }
 
-  String? _extractStudentId(DiscoveredDevice device) {
+  Map<String, dynamic>? _extractStudentPayload(DiscoveredDevice device) {
     if (device.manufacturerData.isEmpty) return null;
     try {
       final bytes = device.manufacturerData;
       if (bytes.length < 4) return null;
-      final rawId = utf8.decode(bytes.sublist(2), allowMalformed: true).trim();
-      if (rawId.length >= 5 && rawId.length <= 12 && RegExp(r'^[A-Z0-9]+$').hasMatch(rawId)) {
-        return rawId;
+      final payload = utf8.decode(bytes.sublist(2), allowMalformed: true).trim();
+      if (!payload.contains('|')) return null;
+      final parts = payload.split('|');
+      final studentId = parts[0];
+      final hits = parts.length > 1 ? int.tryParse(parts[1]) : null;
+      final total = parts.length > 2 ? int.tryParse(parts[2]) : null;
+
+      if (studentId.length >= 5 && studentId.length <= 12 && RegExp(r'^[A-Z0-9]+$').hasMatch(studentId)) {
+        if (hits != null && total != null) {
+          return {
+            'student_id': studentId,
+            'hits': hits,
+            'total': total,
+          };
+        }
       }
     } catch (_) {}
     return null;
   }
 
-  List<int> _encodeTeacherPayload(String token, String subject) {
+  List<int> _encodeTeacherPayload(String token, String subject, int seq) {
     final tokenPart = token.length > 16 ? token.substring(0, 16) : token;
     final subjectPart = subject.length > 10 ? subject.substring(0, 10) : subject;
-    return utf8.encode('$tokenPart|$subjectPart');
+    return utf8.encode('$tokenPart|$subjectPart|$seq');
   }
 
   Future<void> _endSession() async {
@@ -515,10 +567,12 @@ class _TeacherPageState extends State<TeacherPage> {
       }
 
       await widget.api.endSession(sessionId!);
+      _teacherAdvertiseTimer?.cancel();
       await _blePeripheral.stop();
       _scanSub?.cancel();
       _isAdvertising = false;
       _isScanning = false;
+      _globalTotalHits = 0;
       FlutterForegroundTask.stopService();
 
       // Refresh summary
@@ -534,6 +588,7 @@ class _TeacherPageState extends State<TeacherPage> {
           _finalizationOpen = false;
           _showEndConfirm = false;
           _studentTallies.clear();
+          _verifiedStudents.clear();
         });
       }
     } catch (error) {
@@ -560,23 +615,15 @@ class _TeacherPageState extends State<TeacherPage> {
       });
 
       // Automatically start BLE advertising and scanning when session is recovered
-      if (!_isAdvertising) {
+      if (!_isAdvertising && !activeFinalization) {
         try {
           final permsOk = await _ensureBlePermissions();
           if (permsOk) {
             await _ensureBluetoothEnabled();
-            final data = AdvertiseData(
-              serviceUuid: kTeacherServiceUuid,
-              includeDeviceName: false,
-              manufacturerId: kManufacturerId,
-              manufacturerData: Uint8List.fromList(
-                _encodeTeacherPayload(activeToken, activeSubject),
-              ),
-            );
-            await _blePeripheral.start(advertiseData: data);
             _isAdvertising = true;
             _startStudentScan();
             _startForegroundService('Teaching: $activeSubject');
+            _startTeacherAdvertising(activeSubject);
             if (mounted) setState(() {});
           }
         } catch (_) {}
@@ -591,13 +638,18 @@ class _TeacherPageState extends State<TeacherPage> {
       final summary = await widget.api.getAttendanceSummary(sessionId);
       if (!mounted) return;
       final Map<String, String> names = {};
+      final Map<String, bool> verified = {};
       for (final record in (summary['records'] as List)) {
-        if (record['student_id'] != null && record['student_name'] != null) {
-          names[record['student_id']] = record['student_name'];
+        if (record['student_id'] != null) {
+          if (record['student_name'] != null) {
+            names[record['student_id']] = record['student_name'];
+          }
+          verified[record['student_id']] = record['biometric_verified'] == true;
         }
       }
       setState(() {
         _studentNames = names;
+        _verifiedStudents = verified;
         _summary = summary;
       });
     } catch (_) {}
@@ -611,6 +663,9 @@ class _TeacherPageState extends State<TeacherPage> {
       final session = await widget.api.openFinalization(sessionId);
       if (!mounted) return;
       setState(() => _finalizationOpen = (session['finalization_open'] as bool?) ?? true);
+      _teacherAdvertiseTimer?.cancel();
+      await _blePeripheral.stop();
+      _isAdvertising = false;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Finalization opened for students.')));
     } catch (error) {
       if (!mounted) return;
@@ -621,6 +676,7 @@ class _TeacherPageState extends State<TeacherPage> {
   }
 
   Future<void> _logout() async {
+    _teacherAdvertiseTimer?.cancel();
     await _blePeripheral.stop();
     _scanSub?.cancel();
     FlutterForegroundTask.stopService();
@@ -793,7 +849,21 @@ class _TeacherPageState extends State<TeacherPage> {
                               ),
                               const SizedBox(width: 10),
                               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text('${s.studentId}${_studentNames[s.studentId] != null ? ' • ${_studentNames[s.studentId]}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                Row(children: [
+                                  Text('${s.studentId}${_studentNames[s.studentId] != null ? ' • ${_studentNames[s.studentId]}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                  if (_verifiedStudents[s.studentId] == true) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFDCFCE7),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: Colors.green.shade300),
+                                      ),
+                                      child: const Text('Verified', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.w700)),
+                                    ),
+                                  ],
+                                ]),
                                 Text('${s.hits}/${s.total} hits · RSSI ${s.latestRssi ?? '-'} · ${_timeAgo(s.latestAt)}',
                                     style: TextStyle(fontSize: 11, color: cs.onSurface.withAlpha(140))),
                               ])),
@@ -1011,37 +1081,69 @@ class _StudentPageState extends State<StudentPage> {
     try {
       final session = await widget.api.getActiveSession();
       if (!mounted) return;
+      final wasOpen = _finalizationOpen;
+      final isOpen = (session['finalization_open'] as bool?) ?? false;
+
       setState(() {
         _sessionId = session['id'] as String;
         _subject = session['subject'] as String;
         _teacherName = session['teacher_name'] as String?;
-        _finalizationOpen = (session['finalization_open'] as bool?) ?? false;
+        _finalizationOpen = isOpen;
         _blePermissionsGranted = true;
       });
+
+      if (isOpen && !wasOpen && !_meetsThreshold) {
+        _showNotEligibleDialog();
+      }
     } catch (_) {
       // Offline — rely on BLE scan to detect teacher beacon
       // Don't clear session ID if we already have one from BLE
     }
   }
 
+  void _showNotEligibleDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Not Eligible', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.red)),
+        content: const Text('You are not eligible for the test because your presence ratio is below 75%.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _startStudentAdvertising() async {
-    if (_advertising || _studentIdentifier == null) return;
+    if (_studentIdentifier == null) return;
     try {
       final permsOk = await _ensureBleAdvertisePermissions();
       if (!permsOk) return;
+      await _updateStudentAdvertising();
+      if (mounted) setState(() => _advertising = true);
+    } catch (_) {
+      // BLE peripheral advertising may fail on some devices
+    }
+  }
 
-      final idBytes = utf8.encode(_studentIdentifier!);
+  Future<void> _updateStudentAdvertising() async {
+    if (_studentIdentifier == null) return;
+    try {
+      final payloadStr = '$_studentIdentifier|$_inRangeHits|$_totalBeaconReadings';
+      final idBytes = utf8.encode(payloadStr);
       final data = AdvertiseData(
         serviceUuid: kStudentServiceUuid,
         includeDeviceName: false,
         manufacturerId: kManufacturerId,
         manufacturerData: Uint8List.fromList(idBytes),
       );
+      await _blePeripheral.stop();
       await _blePeripheral.start(advertiseData: data);
-      if (mounted) setState(() => _advertising = true);
-    } catch (_) {
-      // BLE peripheral advertising may fail on some devices
-    }
+    } catch (_) {}
   }
 
   Future<void> _startScan() async {
@@ -1087,9 +1189,15 @@ class _StudentPageState extends State<StudentPage> {
               // Use raw RSSI instead of average for tracking hits to match teacher's calculation
               final ok = rssi > kRssiThreshold;
 
-              // Track presence hits for threshold check
-              _totalBeaconReadings++;
-              if (ok) _inRangeHits++;
+              // Track presence hits for threshold check using sequence numbers
+              final seq = payload['seq'] as int?;
+              if (seq != null && seq > _totalBeaconReadings) {
+                _totalBeaconReadings = seq;
+                if (ok) {
+                  _inRangeHits++;
+                }
+                _updateStudentAdvertising();
+              }
 
               // Debounce proximity changes
               _updateDebouncedProximity(ok);
@@ -1161,14 +1269,17 @@ class _StudentPageState extends State<StudentPage> {
       final parts = payload.split('|');
       final token = parts[0];
       final subject = parts.length > 1 ? parts[1].trim() : null;
+      final seq = parts.length > 2 ? int.tryParse(parts[2].trim()) : null;
+
       // Validate: token and subject must be printable (no control chars).
       if (token.isEmpty || RegExp(r'[\x00-\x1F]').hasMatch(token)) return null;
       if (subject != null && (subject.isEmpty || RegExp(r'[\x00-\x1F]').hasMatch(subject))) {
-        return {'token': token, 'subject': null};
+        return {'token': token, 'subject': null, 'seq': seq};
       }
       return {
         'token': token,
         'subject': subject,
+        'seq': seq,
       };
     } catch (_) {}
     return null;
@@ -1418,7 +1529,15 @@ class _StudentPageState extends State<StudentPage> {
 
             // Finalize button
             FilledButton.icon(
-              onPressed: _finalizationOpen ? _finalizeWithBiometric : null,
+              onPressed: _finalizationOpen
+                  ? () {
+                      if (!_meetsThreshold) {
+                        _showNotEligibleDialog();
+                      } else {
+                        _finalizeWithBiometric();
+                      }
+                    }
+                  : null,
               icon: const Icon(Icons.fingerprint_rounded),
               label: const Text('Finalize Attendance (Biometric)'),
             ),
