@@ -844,15 +844,17 @@ def batch_submit_attendance(
             att = Attendance(session_id=session_id, student_user_id=student.id,
                              presence_ratio=0.0, biometric_verified=False)
             db.add(att)
-        att.is_present = item["is_present"]
         att.total_hits = item.get("hits", 0)
         att.total_readings = item.get("total", 0)
         if att.total_readings > 0:
             att.presence_ratio = round(att.total_hits / att.total_readings, 3)
         else:
             att.presence_ratio = 1.0 if item["is_present"] else 0.0
-        att.overridden_by_teacher = True
-        att.override_reason = "BLE batch submit"
+        
+        # Attendance is final only if biometric verification is completed by the student
+        att.is_present = (att.presence_ratio >= 0.75) and att.biometric_verified
+        att.overridden_by_teacher = False
+        att.override_reason = None
         updated += 1
     db.commit()
     return {"message": f"{updated} attendance records saved"}
